@@ -14,7 +14,7 @@ const config = {
     owner: 'Dueño solamente.',
     group: 'Grupos solamente.',
     admin: 'Admins solamente.',
-    bot_admin: 'Hazme admin primero.'
+    bot_admin: 'El bot debe ser admin.'
   }
 }
 

@@ -1,10 +1,10 @@
 import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import config from '../config.js'
 import { addToQueue, acquireLock, releaseLock } from './proc.js'
 
 const PLUGINS_DIR = path.resolve('./plugins')
+const CONFIG_FILE = path.resolve('./config.js')
 const META_TTL = 5 * 60 * 1000
 const LID_TTL = 30 * 60 * 1000
 
@@ -15,6 +15,8 @@ const lidCache = new Map()
 
 let loaded = false
 let antiLink = null
+let configCache = null
+let configMtime = 0
 
 function cleanNum(v) {
   return String(v || '').replace(/\D/g, '')
@@ -38,7 +40,31 @@ function sameUser(a, b) {
   return ra && rb && ra === rb
 }
 
-function isOwner(jid) {
+async function loadConfig(force = false) {
+  const fallback = {
+    bot_name: 'Foxe',
+    bot_author: '',
+    owners: [],
+    prefix: ['.'],
+    messages: {}
+  }
+
+  if (!fs.existsSync(CONFIG_FILE)) return fallback
+
+  try {
+    const stat = fs.statSync(CONFIG_FILE)
+    if (!force && configCache && configMtime === stat.mtimeMs) return configCache
+    const token = force ? `${Date.now()}-${stat.mtimeMs}` : stat.mtimeMs
+    const mod = await import(`${pathToFileURL(CONFIG_FILE).href}?update=${token}`)
+    configCache = { ...fallback, ...(mod.default || mod.config || {}) }
+    configMtime = stat.mtimeMs
+    return configCache
+  } catch {
+    return configCache || fallback
+  }
+}
+
+function isOwner(jid, config) {
   const raw = rawId(jid)
   for (const o of config.owners || []) {
     if (cleanNum(o) === raw) return true
@@ -124,16 +150,20 @@ async function scanDir(dir) {
   return out
 }
 
-async function loadAntiLink() {
+async function loadAntiLink(force = false) {
+  if (antiLink && !force) return antiLink
+
   const paths = [
     path.resolve('./plugins/antilink.js'),
     path.resolve('./core/plugins/antilink.js')
   ]
+
   for (const f of paths) {
     if (!fs.existsSync(f)) continue
     try {
       const stat = fs.statSync(f)
-      const url = `${pathToFileURL(f).href}?update=${stat.mtimeMs}`
+      const token = force ? `${Date.now()}-${stat.mtimeMs}` : stat.mtimeMs
+      const url = `${pathToFileURL(f).href}?update=${token}`
       const mod = await import(url)
       antiLink = mod.anti_link || mod.antiLink || mod.default || null
       return antiLink
@@ -220,7 +250,7 @@ function isAdmin(p, jid) {
   return match && admin
 }
 
-export async function loadPlugins() {
+export async function loadPlugins(force = false) {
   plugins.clear()
   cmdMap.clear()
 
@@ -234,7 +264,8 @@ export async function loadPlugins() {
   for (const full of files) {
     try {
       const stat = fs.statSync(full)
-      const url = `${pathToFileURL(full).href}?update=${stat.mtimeMs}`
+      const token = force ? `${Date.now()}-${stat.mtimeMs}` : stat.mtimeMs
+      const url = `${pathToFileURL(full).href}?update=${token}`
       const mod = await import(url)
       const plugin = mod.default || mod
 
@@ -250,13 +281,25 @@ export async function loadPlugins() {
   loaded = true
 }
 
+export async function reloadFiles() {
+  configCache = null
+  configMtime = 0
+  antiLink = null
+  metaCache.clear()
+  lidCache.clear()
+  await loadConfig(true)
+  await loadAntiLink(true)
+  await loadPlugins(true)
+}
+
 export const ready = loadPlugins()
 
-export { cmdMap, fixLid, getMeta }
+export { cmdMap, plugins, fixLid, getMeta, loadConfig }
 
 export default async function handler(sock, m) {
   if (!m?.message) return
 
+  const config = await loadConfig()
   const prefixes = Array.isArray(config.prefix) ? config.prefix : [String(config.prefix || '.')]
   const body = getText(m)
 
@@ -292,7 +335,7 @@ export default async function handler(sock, m) {
   const senderJid = await fixLid(sock, m)
   const senderId = rawId(senderJid)
   const botJid = sock.decodeJid ? sock.decodeJid(sock.user?.id || '') : sock.user?.id || ''
-  const owner = isOwner(senderJid)
+  const owner = isOwner(senderJid, config)
 
   let groupMeta = null
   let groupName = ''
@@ -320,8 +363,9 @@ export default async function handler(sock, m) {
   if (typeof run !== 'function') return
 
   const lockKey = `${m.chat}:${cmdName}`
+  const lockTtl = Number(cmd.lock_ttl || cmd.lockTtl || 3000)
 
-  if (!acquireLock(lockKey, 3000)) return
+  if (!acquireLock(lockKey, lockTtl)) return
 
   const startTime = Date.now()
 
@@ -343,7 +387,11 @@ export default async function handler(sock, m) {
         group_admins: groupAdmins,
         group_name: groupName,
         config,
-        load_plugins: loadPlugins
+        load_plugins: loadPlugins,
+        reload_files: reloadFiles,
+        reloadFiles,
+        plugins,
+        cmdMap
       })
 
       const elapsed = Date.now() - startTime
@@ -357,7 +405,7 @@ export default async function handler(sock, m) {
 
       return result
     }, {
-      timeout: 10000,
+      timeout: Number(cmd.timeout || 10000),
       cmd: cmdName,
       priority: owner ? 10 : 0
     })

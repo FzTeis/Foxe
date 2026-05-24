@@ -1,25 +1,31 @@
+import fs from 'fs'
+import path from 'path'
 import pino from 'pino'
 import { createInterface } from 'readline'
-import {
-  default: makeWASocket,
+import { pathToFileURL } from 'url'
+import makeWASocket, {
   fetchLatestBaileysVersion,
   DisconnectReason,
   Browsers,
-  makeCacheableSignalKeyStore
+  makeCacheableSignalKeyStore,
+  jidDecode
 } from 'baileys'
 import { useAuth } from './core/auth.js'
-import { initProc, destroyProc, getStats } from './core/proc.js'
-import handler, { ready, loadPlugins } from './core/handler.js'
+import { initProc, destroyProc } from './core/proc.js'
 
 const AUTH_FILE = './auth/auth.sqlite'
+const HANDLER_FILE = path.resolve('./core/handler.js')
 const MAX_RETRIES = 5
 
-const logger = pino({ level: 'silent' })
+const logger = pino({ level: 'silent', enabled: false })
 
 let retries = 0
 let pairingSent = false
 let sock = null
 let auth = null
+let handlerFn = null
+let handlerMod = null
+let handlerMtime = 0
 
 function ask(q) {
   return new Promise((resolve) => {
@@ -46,6 +52,35 @@ async function getVersion() {
     return null
   }
 }
+
+async function loadHandler(force = false) {
+  if (!fs.existsSync(HANDLER_FILE)) throw new Error('No existe ./core/handler.js')
+
+  const stat = fs.statSync(HANDLER_FILE)
+  if (!force && handlerFn && handlerMtime === stat.mtimeMs) return handlerFn
+
+  const token = force ? `${Date.now()}-${stat.mtimeMs}` : stat.mtimeMs
+  const mod = await import(`${pathToFileURL(HANDLER_FILE).href}?update=${token}`)
+  const fn = mod.default
+
+  if (typeof fn !== 'function') throw new Error('./core/handler.js no exporta default function')
+
+  handlerFn = fn
+  handlerMod = mod
+  handlerMtime = stat.mtimeMs
+
+  if (mod.ready && typeof mod.ready.then === 'function') await mod.ready
+  return handlerFn
+}
+
+async function reloadAllFiles() {
+  await loadHandler(true)
+  if (typeof handlerMod?.reloadFiles === 'function') await handlerMod.reloadFiles()
+  else if (typeof handlerMod?.loadPlugins === 'function') await handlerMod.loadPlugins(true)
+  return true
+}
+
+globalThis.reloadAllFiles = reloadAllFiles
 
 async function start() {
   auth = useAuth(AUTH_FILE)
@@ -100,7 +135,7 @@ async function start() {
   sock.decodeJid = (jid) => {
     if (!jid) return jid
     if (/:\d+@/gi.test(jid)) {
-      const decoded = sock.decodeJid(jid) || {}
+      const decoded = jidDecode(jid) || {}
       if (decoded.user && decoded.server) return `${decoded.user}@${decoded.server}`
     }
     return jid
@@ -133,9 +168,7 @@ async function start() {
       pairingSent = false
       console.log('Conectado.')
 
-      await ready
-      await loadPlugins()
-
+      await reloadAllFiles()
       initProc()
     }
 
@@ -175,7 +208,7 @@ async function start() {
     }
   })
 
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
     for (let i = 0; i < messages.length; i++) {
@@ -206,7 +239,12 @@ async function start() {
         }
       }
 
-      handler(sock, m)
+      try {
+        const handler = await loadHandler()
+        await handler(sock, m)
+      } catch (err) {
+        console.error(`Error handler: ${err.message}`)
+      }
     }
   })
 

@@ -4,7 +4,6 @@
   "description": "Foxe, un bot de WhatsApp para ayudar a la gente",
   "main": "index.js",
   "type": "module",
-  "private": true,
   "author": "thisAdo, FzTeis, IamDestroy",
   "scripts": {
     "start": "node index.js",

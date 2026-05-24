@@ -18,7 +18,7 @@ const {
   proto
 } = baileys
 
-const db_dir = './database'
+const db_dir = './auth'
 const db_file = path.join(db_dir, 'auth.sqlite')
 const handler_file = path.resolve('./core/handler.js')
 
@@ -388,7 +388,7 @@ async function start_bot() {
       try {
         if (state.creds.registered) return
 
-        const code = await sock.requestPairingCode(phone_number, 'FOXEBOT')
+        const code = await sock.requestPairingCode(phone_number, 'FOXEBOT1')
         const formatted = code?.match(/.{1,4}/g)?.join(' - ') || code
 
         console.log()

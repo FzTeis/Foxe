@@ -1,9 +1,9 @@
-import { generateWAMessageFromContent } from 'baileys'
+import { generateWAMessageFromContent, prepareWAMessageMedia } from 'baileys'
 import config from '../config.js'
 
 async function fetchBuffer(url) {
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Error descargando thumbnail: ${res.status}`)
+  if (!res.ok) throw new Error(`Error descargando imagen: ${res.status}`)
   return Buffer.from(await res.arrayBuffer())
 }
 
@@ -30,7 +30,7 @@ async function getJimpBuffer(image, mime) {
   })
 }
 
-async function resizeThumbnail(thumbnail, width = 1000, height = 600) {
+async function resizeThumbnail(thumbnail, width = 1000, height = 700) {
   if (!thumbnail) return null
 
   try {
@@ -56,7 +56,11 @@ async function resizeThumbnail(thumbnail, width = 1000, height = 600) {
       try {
         image.contain({ w: width, h: height })
       } catch {
-        image.resize(width, height)
+        try {
+          image.resize(width, height)
+        } catch {
+          image.resize({ w: width, h: height })
+        }
       }
     }
 
@@ -64,10 +68,16 @@ async function resizeThumbnail(thumbnail, width = 1000, height = 600) {
       image.quality(90)
     }
 
-    const mime = Jimp.MIME_JPEG || 'image/jpeg'
-    return await getJimpBuffer(image, mime)
+    return await getJimpBuffer(image, 'image/jpeg')
   } catch (e) {
-    console.error('Error redimensionando thumbnail:', e)
+    console.error('Error redimensionando imagen:', e)
+
+    try {
+      if (typeof thumbnail === 'string' && /^https?:\/\//.test(thumbnail)) {
+        return await fetchBuffer(thumbnail)
+      }
+    } catch {}
+
     return null
   }
 }
@@ -89,42 +99,39 @@ function quotedContext(m) {
 async function sendInteractiveMenu(sock, m, menu) {
   const sender = getSender(m)
 
-  const thumbResized = await resizeThumbnail(
+  const imageBuffer = await resizeThumbnail(
     'https://cdn.adoolab.xyz/dl/9637e621.jpg',
     1000,
-    600
+    700
+  )
+
+  if (!imageBuffer) {
+    return sock.sendMessage(
+      m.chat,
+      {
+        text: menu
+      },
+      {
+        quoted: m
+      }
+    )
+  }
+
+  const media = await prepareWAMessageMedia(
+    {
+      image: imageBuffer
+    },
+    {
+      upload: sock.waUploadToServer
+    }
   )
 
   const nativeFlowPayload = {
     header: {
-      documentMessage: {
-        url: 'https://mmg.whatsapp.net/v/t62.7119-24/539012045_745537058346694_1512031191239726227_n.enc',
-        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        fileSha256: Buffer.from('fa09afbc207a724252bae1b764ecc7b13060440ba47a3bf59e77f01924924bfe', 'hex'),
-        fileLength: {
-          low: -727379969,
-          high: 232,
-          unsigned: true
-        },
-        pageCount: 0,
-        mediaKey: Buffer.from('3163ba7c8db6dd363c4f48bda2735cc0d0413e57567f0a758f514f282889173c', 'hex'),
-        fileName: config.bot_name || 'Menu',
-        fileEncSha256: Buffer.from('652f2ff6d8a8dae9f5c9654e386de5c01c623fe98d81a28f63dfb0979a44a22f', 'hex'),
-        directPath: '/v/t62.7119-24/539012045_745537058346694_1512031191239726227_n.enc',
-        mediaKeyTimestamp: {
-          low: 1756370084,
-          high: 0,
-          unsigned: false
-        },
-        ...(thumbResized ? { jpegThumbnail: thumbResized } : {}),
-        contextInfo: {
-          mentionedJid: sender ? [sender] : [],
-          groupMentions: [],
-          forwardingScore: 777,
-          isForwarded: true
-        }
-      },
-      hasMediaAttachment: true
+      title: config.bot_name || 'Menu',
+      subtitle: '© Simple Bot Of WhatsApp',
+      hasMediaAttachment: true,
+      imageMessage: media.imageMessage
     },
 
     body: {
@@ -246,8 +253,24 @@ export default {
     try {
       return await sendInteractiveMenu(sock, m, menu.trim())
     } catch (e) {
-      console.error('Error enviando el menú:', e)
-      return m.reply(menu.trim())
+      console.error('Error enviando el menu:', e)
+
+      try {
+        return await sock.sendMessage(
+          m.chat,
+          {
+            image: {
+              url: 'https://cdn.adoolab.xyz/dl/9637e621.jpg'
+            },
+            caption: menu.trim()
+          },
+          {
+            quoted: m
+          }
+        )
+      } catch {
+        return m.reply(menu.trim())
+      }
     }
   }
 }

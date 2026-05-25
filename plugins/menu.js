@@ -30,7 +30,7 @@ async function getJimpBuffer(image, mime) {
   })
 }
 
-async function resizeThumbnail(thumbnail, size = 400) {
+async function resizeThumbnail(thumbnail, width = 1000, height = 600) {
   if (!thumbnail) return null
 
   try {
@@ -51,17 +51,17 @@ async function resizeThumbnail(thumbnail, size = 400) {
     const image = await Jimp.read(buffer)
 
     try {
-      image.cover(size, size)
+      image.contain(width, height)
     } catch {
       try {
-        image.cover({ w: size, h: size })
+        image.contain({ w: width, h: height })
       } catch {
-        image.resize(size, size)
+        image.resize(width, height)
       }
     }
 
     if (typeof image.quality === 'function') {
-      image.quality(85)
+      image.quality(90)
     }
 
     const mime = Jimp.MIME_JPEG || 'image/jpeg'
@@ -91,7 +91,8 @@ async function sendInteractiveMenu(sock, m, menu) {
 
   const thumbResized = await resizeThumbnail(
     'https://cdn.adoolab.xyz/dl/9637e621.jpg',
-    400
+    1000,
+    600
   )
 
   const nativeFlowPayload = {
@@ -245,7 +246,7 @@ export default {
     try {
       return await sendInteractiveMenu(sock, m, menu.trim())
     } catch (e) {
-      console.error('Error enviando menú interactivo:', e)
+      console.error('Error enviando el menú:', e)
       return m.reply(menu.trim())
     }
   }

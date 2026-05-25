@@ -1,4 +1,4 @@
-import { generateWAMessageFromContent } from '@whiskeysockets/baileys'
+import { generateWAMessageFromContent } from 'baileys'
 import config from '../config.js'
 
 async function fetchBuffer(url) {

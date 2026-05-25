@@ -1,14 +1,18 @@
-const cmd = {
+import { performance } from 'perf_hooks'
+
+export default {
   command: ['ping', 'p'],
-  run: async (sock, m) => {
-    const start = Date.now()
+  view: ['ping', 'p'],
+  category: ['info'],
+
+  async run(sock, m) {
+    const start = performance.now()
 
     const msg = await m.reply('`Calculando . . .`')
-
     if (!msg) return
 
-    const end = Date.now()
-    const raw = end - start
+    const end = performance.now()
+    const raw = (end - start).toFixed(2)
 
     try {
       await sock.sendMessage(m.chat, {
@@ -20,5 +24,3 @@ const cmd = {
     }
   }
 }
-
-export default cmd

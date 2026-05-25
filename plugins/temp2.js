@@ -5,10 +5,12 @@ const cmd = {
       const from = m.chat
       const sender2 = m.sender
 
+      const groupJid = '120363428735978244@g.us'
+
       await lunex.sendMessage(from, {
         text: `This is just a test, my noble friend.\n\n@${sender2.split('@')[0]}`,
         contextInfo: {
-          remoteJid: from,
+          remoteJid: groupJid,
           mentionedJid: [sender2]
         }
       })

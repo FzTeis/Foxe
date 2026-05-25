@@ -99,7 +99,7 @@ export default {
     }
 
     try {
-      await withTimeout(
+      const result = await withTimeout(
         executeCode({
           code,
           context: {
@@ -119,7 +119,7 @@ export default {
         60000
       )
 
-      return
+      return m.reply(safeJson(result))
     } catch (err) {
       return m.reply(safeJson({
         error: true,

@@ -128,7 +128,7 @@ async function sendInteractiveMenu(sock, m, menu) {
 
   const nativeFlowPayload = {
     header: {
-      title: '*¡ WELCOME !*',
+      title: '*¡ WELCOME, HOW ARE YOU !*',
       subtitle: '© Simple Bot Of WhatsApp',
       hasMediaAttachment: true,
       imageMessage: media.imageMessage
@@ -148,8 +148,8 @@ async function sendInteractiveMenu(sock, m, menu) {
         limited_time_offer: {
           text: '🌾 𝗠𝗲𝗻𝘂 𝗟𝗶𝘀𝘁',
           url: 'https://cdn.adoolab.xyz/dl/9637e621.jpg',
-          copy_code: '© Foxe 2026',
-          expiration_time: Date.now() + 86400000
+          copy_code: null,
+          expiration_time: null
         }
       })
     },

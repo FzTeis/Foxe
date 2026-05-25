@@ -30,20 +30,20 @@ async function getJimpBuffer(image, mime) {
   })
 }
 
-async function resizeThumbnail(thumbnail, width = 1000, height = 700) {
-  if (!thumbnail) return null
+async function resizeImage(imageInput, width = 1000, height = 700) {
+  if (!imageInput) return null
 
   try {
     const Jimp = await loadJimp()
 
-    let buffer = thumbnail
+    let buffer = imageInput
 
-    if (typeof thumbnail === 'string' && /^https?:\/\//.test(thumbnail)) {
-      buffer = await fetchBuffer(thumbnail)
+    if (typeof imageInput === 'string' && /^https?:\/\//.test(imageInput)) {
+      buffer = await fetchBuffer(imageInput)
     }
 
-    if (typeof thumbnail === 'string' && /^data:.*?;base64,/.test(thumbnail)) {
-      buffer = Buffer.from(thumbnail.split(',')[1], 'base64')
+    if (typeof imageInput === 'string' && /^data:.*?;base64,/.test(imageInput)) {
+      buffer = Buffer.from(imageInput.split(',')[1], 'base64')
     }
 
     if (!Buffer.isBuffer(buffer)) return null
@@ -73,8 +73,8 @@ async function resizeThumbnail(thumbnail, width = 1000, height = 700) {
     console.error('Error redimensionando imagen:', e)
 
     try {
-      if (typeof thumbnail === 'string' && /^https?:\/\//.test(thumbnail)) {
-        return await fetchBuffer(thumbnail)
+      if (typeof imageInput === 'string' && /^https?:\/\//.test(imageInput)) {
+        return await fetchBuffer(imageInput)
       }
     } catch {}
 
@@ -99,7 +99,7 @@ function quotedContext(m) {
 async function sendInteractiveMenu(sock, m, menu) {
   const sender = getSender(m)
 
-  const imageBuffer = await resizeThumbnail(
+  const imageBuffer = await resizeImage(
     'https://cdn.adoolab.xyz/dl/9637e621.jpg',
     1000,
     700
@@ -144,7 +144,14 @@ async function sendInteractiveMenu(sock, m, menu) {
 
     nativeFlowMessage: {
       buttons: [],
-      messageParamsJson: '{}'
+      messageParamsJson: JSON.stringify({
+        limited_time_offer: {
+          text: '🌾 𝗠𝗲𝗻𝘂 𝗟𝗶𝘀𝘁',
+          url: 'https://cdn.adoolab.xyz/dl/9637e621.jpg',
+          copy_code: '© Foxe 2026',
+          expiration_time: Date.now() + 86400000
+        }
+      })
     },
 
     contextInfo: {

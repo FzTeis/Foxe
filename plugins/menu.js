@@ -128,7 +128,7 @@ async function sendInteractiveMenu(sock, m, menu) {
 
   const nativeFlowPayload = {
     header: {
-      title: config.bot_name || 'Menu',
+      title: '¡ WELCOME ¡',
       subtitle: '© Simple Bot Of WhatsApp',
       hasMediaAttachment: true,
       imageMessage: media.imageMessage

@@ -1,4 +1,4 @@
-import util from 'util'
+import util from 'node:util'
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 
@@ -94,12 +94,12 @@ export default {
       return m.reply(safeJson({
         error: true,
         message: 'Código vacío',
-        use: '.exec return sock.user'
+        use: '.exec await sock.sendMessage(m.chat, { text: "hola" })'
       }))
     }
 
     try {
-      const result = await withTimeout(
+      await withTimeout(
         executeCode({
           code,
           context: {
@@ -119,7 +119,7 @@ export default {
         60000
       )
 
-      return m.reply(safeJson(result))
+      return
     } catch (err) {
       return m.reply(safeJson({
         error: true,

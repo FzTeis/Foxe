@@ -30,30 +30,25 @@ const getExecCode = (m, rawCode = null) => {
     }
   }
   
-  const prefix = m.prefix || ''
   const fullText = getBody(m)
+  const prefix = m.prefix || ''
   
-  if (fullText.startsWith('=>')) {
-    let execCode = fullText.slice(2).trim()
-    if (!execCode.includes('return') && !execCode.includes('=>')) {
-      execCode = `return (${execCode})`
-    }
-    return execCode
+  if (fullText.startsWith('=>') || (prefix === '' && fullText.trim().startsWith('=>'))) {
+    let execCode = fullText.replace(/^=>\s*/, '').trim()
+    return { type: 'expression', code: execCode }
   }
   
-  if (prefix === '>') {
-    return code
+  if (prefix === '>' || fullText.startsWith('>')) {
+    let execCode = fullText.replace(/^>\s*/, '').trim()
+    return { type: 'script', code: execCode }
   }
   
   if (code.startsWith('=>')) {
     let execCode = code.slice(2).trim()
-    if (!execCode.includes('return') && !execCode.includes('=>')) {
-      execCode = `return (${execCode})`
-    }
-    return execCode
+    return { type: 'expression', code: execCode }
   }
   
-  return code
+  return { type: 'script', code }
 }
 
 const safeJson = value => {
@@ -90,26 +85,24 @@ const withTimeout = async (promise, ms = 60000) => {
   }
 }
 
-const executeCode = async ({ code, context }) => {
+const executeCode = async ({ code, type, context }) => {
   const names = Object.keys(context)
   const values = Object.values(context)
   
-  let fn
-  
-  try {
-    fn = new AsyncFunction(...names, `"use strict"; return (${code})`)
-  } catch {
-    try {
-      fn = new AsyncFunction(...names, `"use strict"; ${code}`)
-    } catch (err) {
-      const sandbox = { ...context }
-      const script = new vm.Script(code)
-      const result = script.runInNewContext(sandbox)
-      return result
-    }
+  if (type === 'expression') {
+    const fn = new AsyncFunction(...names, `"use strict"; return (${code})`)
+    return await fn(...values)
   }
   
-  return await fn(...values)
+  try {
+    const fn = new AsyncFunction(...names, `"use strict"; ${code}`)
+    return await fn(...values)
+  } catch (err) {
+    const sandbox = { ...context }
+    const script = new vm.Script(code)
+    const result = script.runInNewContext(sandbox)
+    return result
+  }
 }
 
 export default {
@@ -119,13 +112,13 @@ export default {
   noPrefix: ['=>', '>'],
   
   async run(sock, m) {
-    let code = getExecCode(m)
+    const { type, code } = getExecCode(m)
     
     if (!code) {
       return m.reply('```\n' + safeJson({
         error: true,
         message: 'Código vacío',
-        use: '.e await sock.sendMessage(m.chat, { text: "hola" })\n=> m.sender\n> const fs = require("fs"); fs.readFileSync("file.txt", "utf8")'
+        use: '.e await sock.sendMessage(m.chat, { text: "hola" })\n=> m.sender\n> let fs = require("fs"); fs.readFileSync("file.txt", "utf8")'
       }) + '\n```')
     }
     
@@ -162,6 +155,7 @@ export default {
       const result = await withTimeout(
         executeCode({
           code,
+          type,
           context: {
             sock,
             conn: sock,

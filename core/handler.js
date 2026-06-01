@@ -360,26 +360,52 @@ export default async function handler(sock, m) {
   m.isQuoted = !!quotedRaw?.quotedMessage
   
   if (m.isQuoted) {
+    const quotedFull = {
+      key: {
+        remoteJid: m.chat,
+        fromMe: false,
+        id: quotedRaw.stanzaId,
+        participant: quotedRaw.participant || m.sender
+      },
+      message: quotedRaw.quotedMessage,
+      sender: quotedRaw.participant,
+      chat: m.chat,
+      isGroup: m.isGroup
+    }
+    
     const quotedType = Object.keys(quotedRaw.quotedMessage)[0]
     const quotedMsgObj = quotedRaw.quotedMessage[quotedType]
-    m.quoted = {
-      text: quotedMsgObj?.text || quotedMsgObj?.caption || '',
-      sender: quotedRaw.participant,
-      type: quotedType.replace('Message', ''),
-      hasMedia: !!(quotedRaw.quotedMessage?.imageMessage || quotedRaw.quotedMessage?.videoMessage || quotedRaw.quotedMessage?.audioMessage || quotedRaw.quotedMessage?.documentMessage),
-      download: async () => {
-        try {
-          const quotedMsg = { message: quotedRaw.quotedMessage, key: m.key }
-          return await sock.downloadMediaMessage(quotedMsg)
-        } catch {
-          return null
-        }
-      },
-      reply: async (text, opts = {}) => {
-        const quotedMsg = { message: quotedRaw.quotedMessage, key: m.key }
-        return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: quotedMsg })
+    
+    quotedFull.type = quotedType
+    quotedFull.mimetype = quotedMsgObj?.mimetype || ''
+    
+    if (quotedMsgObj?.text) {
+      quotedFull.text = quotedMsgObj.text
+    } else if (quotedMsgObj?.caption) {
+      quotedFull.text = quotedMsgObj.caption
+    } else if (quotedType === 'conversation') {
+      quotedFull.text = quotedRaw.quotedMessage.conversation || ''
+    } else if (quotedMsgObj?.extendedTextMessage?.text) {
+      quotedFull.text = quotedMsgObj.extendedTextMessage.text
+    } else {
+      quotedFull.text = ''
+    }
+    
+    quotedFull.hasMedia = !!(quotedRaw.quotedMessage?.imageMessage || quotedRaw.quotedMessage?.videoMessage || quotedRaw.quotedMessage?.audioMessage || quotedRaw.quotedMessage?.documentMessage || quotedRaw.quotedMessage?.stickerMessage)
+    
+    quotedFull.download = async () => {
+      try {
+        return await sock.downloadMediaMessage(quotedFull)
+      } catch {
+        return null
       }
     }
+    
+    quotedFull.reply = async (text, opts = {}) => {
+      return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: quotedFull })
+    }
+    
+    m.quoted = quotedFull
   } else {
     m.quoted = null
   }

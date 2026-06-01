@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { addToQueue } from './proc.js'
-import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import { downloadMediaMessage } from 'baileys'
 
 const PLUGINS_DIR = path.resolve('./plugins')
 const CONFIG_FILE = path.resolve('./config.js')

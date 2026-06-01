@@ -1,12 +1,13 @@
 import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import { addToQueue, acquireLock, releaseLock } from './proc.js'
+import { addToQueue } from './proc.js'
 
 const PLUGINS_DIR = path.resolve('./plugins')
 const CONFIG_FILE = path.resolve('./config.js')
-const META_TTL = 5 * 60 * 1000
-const LID_TTL = 30 * 60 * 1000
+const META_TTL = 10 * 60 * 1000
+const LID_TTL = 120 * 60 * 1000
+const CONFIG_TTL = 5000
 
 const plugins = new Map()
 const cmdMap = new Map()
@@ -17,6 +18,7 @@ let loaded = false
 let antiLink = null
 let configCache = null
 let configMtime = 0
+let lastConfigFetch = 0
 
 function cleanNum(v) {
   return String(v || '').replace(/\D/g, '')
@@ -51,13 +53,22 @@ async function loadConfig(force = false) {
 
   if (!fs.existsSync(CONFIG_FILE)) return fallback
 
+  const now = Date.now()
+  if (!force && configCache && (now - lastConfigFetch) < CONFIG_TTL) {
+    return configCache
+  }
+
   try {
     const stat = fs.statSync(CONFIG_FILE)
-    if (!force && configCache && configMtime === stat.mtimeMs) return configCache
-    const token = force ? `${Date.now()}-${stat.mtimeMs}` : stat.mtimeMs
+    if (!force && configCache && configMtime === stat.mtimeMs) {
+      lastConfigFetch = now
+      return configCache
+    }
+    const token = `${Date.now()}-${stat.mtimeMs}`
     const mod = await import(`${pathToFileURL(CONFIG_FILE).href}?update=${token}`)
     configCache = { ...fallback, ...(mod.default || mod.config || {}) }
     configMtime = stat.mtimeMs
+    lastConfigFetch = now
     return configCache
   } catch {
     return configCache || fallback
@@ -66,8 +77,9 @@ async function loadConfig(force = false) {
 
 function isOwner(jid, config) {
   const raw = rawId(jid)
-  for (const o of config.owners || []) {
-    if (cleanNum(o) === raw) return true
+  const owners = config.owners || []
+  for (let i = 0; i < owners.length; i++) {
+    if (cleanNum(owners[i]) === raw) return true
   }
   return false
 }
@@ -113,25 +125,6 @@ function getAliases(cmd) {
   return [String(cmd).toLowerCase()]
 }
 
-function logCmd(data) {
-  const time = new Date().toLocaleTimeString('es-HN', {
-    timeZone: 'America/Tegucigalpa',
-    hour12: false
-  })
-
-  setImmediate(() => {
-    console.log(
-      `\x1b[35m[${time}]\x1b[0m ` +
-      `\x1b[36m${data.cmd}\x1b[0m ` +
-      `\x1b[90mde\x1b[0m ` +
-      `\x1b[33m${data.user}\x1b[0m ` +
-      `\x1b[90men\x1b[0m ` +
-      `\x1b[37m${data.chat}\x1b[0m ` +
-      `\x1b[90m${data.ms}ms\x1b[0m`
-    )
-  })
-}
-
 async function scanDir(dir) {
   const out = []
   if (!fs.existsSync(dir)) return out
@@ -142,7 +135,7 @@ async function scanDir(dir) {
     const stat = fs.statSync(full)
     if (stat.isDirectory()) {
       const sub = await scanDir(full)
-      out.push(...sub)
+      for (let i = 0; i < sub.length; i++) out.push(sub[i])
     } else if (entry.endsWith('.js') || entry.endsWith('.mjs')) {
       out.push(full)
     }
@@ -175,10 +168,14 @@ async function loadAntiLink(force = false) {
 }
 
 async function runAntiLink(sock, m) {
-  try {
-    const fn = antiLink || await loadAntiLink()
-    if (typeof fn === 'function') await fn(sock, m)
-  } catch {}
+  if (!antiLink) {
+    antiLink = await loadAntiLink()
+  }
+  if (typeof antiLink === 'function') {
+    try {
+      await antiLink(sock, m)
+    } catch {}
+  }
 }
 
 async function getMeta(sock, chat) {
@@ -202,17 +199,18 @@ async function getLid(sock, chat, lid) {
 
   const meta = await getMeta(sock, chat)
   const parts = meta?.participants || []
-  const match = parts.find(p =>
-    p.id === input || p.lid === input ||
-    sameUser(p.id, input) || sameUser(p.lid, input)
-  )
-
-  if (match?.phoneNumber) {
-    const jid = normJid(match.phoneNumber)
-    if (jid) {
-      lidCache.set(input, jid)
-      setTimeout(() => lidCache.delete(input), LID_TTL)
-      return jid
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    if (p.id === input || p.lid === input || sameUser(p.id, input) || sameUser(p.lid, input)) {
+      if (p?.phoneNumber) {
+        const jid = normJid(p.phoneNumber)
+        if (jid) {
+          lidCache.set(input, jid)
+          setTimeout(() => lidCache.delete(input), LID_TTL)
+          return jid
+        }
+      }
+      break
     }
   }
 
@@ -245,9 +243,12 @@ async function fixLid(sock, m) {
 function isAdmin(p, jid) {
   const raw = rawId(jid)
   const ids = [p?.id, p?.lid, p?.phoneNumber]
-  const match = ids.some(id => id && rawId(id) === raw)
-  const admin = p?.admin === 'admin' || p?.admin === 'superadmin'
-  return match && admin
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i] && rawId(ids[i]) === raw) {
+      return p?.admin === 'admin' || p?.admin === 'superadmin'
+    }
+  }
+  return false
 }
 
 export async function loadPlugins(force = false) {
@@ -274,7 +275,18 @@ export async function loadPlugins(force = false) {
       plugins.set(full, plugin)
 
       const aliases = getAliases(plugin.command)
-      for (const alias of aliases) cmdMap.set(alias, plugin)
+      for (let i = 0; i < aliases.length; i++) {
+        cmdMap.set(aliases[i], plugin)
+      }
+
+      if (plugin.noPrefix && Array.isArray(plugin.noPrefix)) {
+        for (let i = 0; i < plugin.noPrefix.length; i++) {
+          const alias = plugin.noPrefix[i]
+          if (!cmdMap.has(alias)) {
+            cmdMap.set(alias, plugin)
+          }
+        }
+      }
     } catch {}
   }
 
@@ -284,6 +296,7 @@ export async function loadPlugins(force = false) {
 export async function reloadFiles() {
   configCache = null
   configMtime = 0
+  lastConfigFetch = 0
   antiLink = null
   metaCache.clear()
   lidCache.clear()
@@ -300,7 +313,7 @@ export default async function handler(sock, m) {
   if (!m?.message) return
 
   const config = await loadConfig()
-  const prefixes = Array.isArray(config.prefix) ? config.prefix : [String(config.prefix || '.')]
+  const prefixes = config.prefix || ['.']
   const body = getText(m)
 
   m.text = body
@@ -312,19 +325,37 @@ export default async function handler(sock, m) {
     }
   }
 
-  const prefix = prefixes.find(p => body.startsWith(p))
-
-  if (!prefix) {
-    runAntiLink(sock, m)
-    return
+  let prefix = null
+  for (let i = 0; i < prefixes.length; i++) {
+    if (body.startsWith(prefixes[i])) {
+      prefix = prefixes[i]
+      break
+    }
   }
 
-  const withoutPrefix = body.slice(prefix.length).trim()
-  if (!withoutPrefix) return
+  let cmdName = null
+  let args = []
+  let cmdText = ''
 
-  const args = withoutPrefix.split(/ +/)
-  const cmdName = String(args.shift() || '').toLowerCase()
-  const text = args.join(' ')
+  if (prefix) {
+    const withoutPrefix = body.slice(prefix.length).trim()
+    if (withoutPrefix) {
+      const parts = withoutPrefix.split(/ +/)
+      cmdName = parts[0].toLowerCase()
+      args = parts.slice(1)
+      cmdText = args.join(' ')
+    }
+  } else if (body) {
+    const parts = body.split(/ +/)
+    cmdName = parts[0].toLowerCase()
+    args = parts.slice(1)
+    cmdText = args.join(' ')
+  }
+
+  if (!cmdName) {
+    if (!prefix) await runAntiLink(sock, m)
+    return
+  }
 
   if (!loaded) await ready
 
@@ -344,37 +375,61 @@ export default async function handler(sock, m) {
   let botAdmin = false
 
   if ((flags.group || flags.admin || flags.botAdmin) && !m.isGroup) {
-    return m.reply(config.messages?.group || 'Solo grupos.')
+    await m.reply(config.messages?.group || 'Solo grupos.')
+    return
   }
 
   if (m.isGroup && (flags.group || flags.admin || flags.botAdmin)) {
     groupMeta = await getMeta(sock, m.chat)
-    groupName = groupMeta?.subject || ''
-    groupAdmins = groupMeta?.participants?.filter(p => p.admin === 'admin' || p.admin === 'superadmin') || []
-    admin = groupMeta?.participants?.some(p => isAdmin(p, senderJid)) || false
-    botAdmin = groupMeta?.participants?.some(p => isAdmin(p, botJid)) || false
+    if (groupMeta) {
+      groupName = groupMeta.subject || ''
+      const participants = groupMeta.participants || []
+      groupAdmins = []
+      for (let i = 0; i < participants.length; i++) {
+        const p = participants[i]
+        if (p.admin === 'admin' || p.admin === 'superadmin') {
+          groupAdmins.push(p)
+        }
+      }
+      for (let i = 0; i < participants.length; i++) {
+        if (isAdmin(participants[i], senderJid)) {
+          admin = true
+          break
+        }
+      }
+      for (let i = 0; i < participants.length; i++) {
+        if (isAdmin(participants[i], botJid)) {
+          botAdmin = true
+          break
+        }
+      }
+    }
   }
 
-  if (flags.owner && !owner) return m.reply(config.messages?.owner || 'Dueño solamente.')
-  if (flags.admin && !admin) return m.reply(config.messages?.admin || 'Admins solamente.')
-  if (flags.botAdmin && !botAdmin) return m.reply(config.messages?.bot_admin || 'Hazme admin primero.')
+  if (flags.owner && !owner) {
+    await m.reply(config.messages?.owner || 'Dueño solamente.')
+    return
+  }
+  if (flags.admin && !admin) {
+    await m.reply(config.messages?.admin || 'Admins solamente.')
+    return
+  }
+  if (flags.botAdmin && !botAdmin) {
+    await m.reply(config.messages?.bot_admin || 'Hazme admin primero.')
+    return
+  }
 
   const run = cmd.run || cmd.execute || cmd.handler
   if (typeof run !== 'function') return
-
-  const lockKey = `${m.chat}:${cmdName}`
-  const lockTtl = Number(cmd.lock_ttl || cmd.lockTtl || 3000)
-
-  if (!acquireLock(lockKey, lockTtl)) return
 
   const startTime = Date.now()
 
   try {
     await addToQueue(m.chat, senderJid, async () => {
-      const result = await run(sock, m, {
+      await run(sock, m, {
         args,
-        text,
-        prefix,
+        text: cmdText,
+        prefix: prefix || '',
         command: cmdName,
         command_name: cmdName,
         sender_jid: senderJid,
@@ -395,21 +450,26 @@ export default async function handler(sock, m) {
       })
 
       const elapsed = Date.now() - startTime
-
-      logCmd({
-        cmd: cmdName,
-        user: m.pushName || senderId || 'User',
-        chat: groupName || m.chat,
-        ms: elapsed
+      const time = new Date().toLocaleTimeString('es-HN', {
+        timeZone: 'America/Tegucigalpa',
+        hour12: false
       })
 
-      return result
+      console.log(
+        `\x1b[35m[${time}]\x1b[0m ` +
+        `\x1b[36m${cmdName}\x1b[0m ` +
+        `\x1b[90mde\x1b[0m ` +
+        `\x1b[33m${m.pushName || senderId || 'User'}\x1b[0m ` +
+        `\x1b[90men\x1b[0m ` +
+        `\x1b[37m${groupName || m.chat}\x1b[0m ` +
+        `\x1b[90m${elapsed}ms\x1b[0m`
+      )
     }, {
       timeout: Number(cmd.timeout || 10000),
       cmd: cmdName,
       priority: owner ? 10 : 0
     })
-  } finally {
-    releaseLock(lockKey)
+  } catch (err) {
+    console.error(`Error en comando ${cmdName}:`, err)
   }
 }

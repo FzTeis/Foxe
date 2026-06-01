@@ -118,7 +118,7 @@ export default {
         const chunks = Math.ceil(formatted.length / maxLength)
         for (let i = 0; i < chunks; i++) {
           const chunk = formatted.slice(i * maxLength, (i + 1) * maxLength)
-          await m.reply('```\n' + chunk + '\n```')
+          await m.reply('\n' + chunk + '\n')
         }
       } else {
         await m.reply('\n' + formatted + '\n')

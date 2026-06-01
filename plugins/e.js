@@ -1,23 +1,4 @@
-import util from 'node:util'
-
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-
-const safeJson = value => {
-  const seen = new WeakSet()
-  return JSON.stringify(value === undefined ? null : value, (_, val) => {
-    if (typeof val === 'bigint') return val.toString()
-    if (typeof val === 'function') return `[Function ${val.name || 'anonymous'}]`
-    if (typeof val === 'symbol') return val.toString()
-    if (val instanceof Error) {
-      return { name: val.name, message: val.message, stack: val.stack }
-    }
-    if (typeof val === 'object' && val !== null) {
-      if (seen.has(val)) return '[Circular]'
-      seen.add(val)
-    }
-    return val
-  }, 2)
-}
+import util from 'util'
 
 export default {
   command: ['exec', 'eval', 'e', '>'],
@@ -30,7 +11,16 @@ export default {
     rawCode = rawCode.trim()
 
     if (!rawCode) {
-      return m.reply('```\n{\n  "error": true,\n  "message": "Código vacío"\n}\n```')
+      return m.reply('🌳 Introduzca el código que desea ejecutar.')
+    }
+
+    const logs = []
+    const fakeConsole = {
+      ...console,
+      log: (...x) => logs.push(x.map(v => format(v)).join(' ')),
+      error: (...x) => logs.push(x.map(v => format(v)).join(' ')),
+      warn: (...x) => logs.push(x.map(v => format(v)).join(' ')),
+      info: (...x) => logs.push(x.map(v => format(v)).join(' ')),
     }
 
     let isExpression = false
@@ -45,26 +35,54 @@ export default {
     }
 
     try {
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+      
       let result
-      const context = { m, sock, util }
       
       if (isExpression) {
-        const fn = new AsyncFunction(...Object.keys(context), `return (${code})`)
-        result = await fn(...Object.values(context))
+        const fn = new AsyncFunction('m', 'sock', 'console', `return (${code})`)
+        result = await fn(m, sock, fakeConsole)
       } else {
-        const fn = new AsyncFunction(...Object.keys(context), code)
-        result = await fn(...Object.values(context))
+        const fn = new AsyncFunction('m', 'sock', 'console', code)
+        result = await fn(m, sock, fakeConsole)
       }
-      
-      const formatted = safeJson(result)
-      await m.reply('```\n' + formatted + '\n```')
+
+      let output = ''
+
+      if (logs.length) {
+        output += logs.join('\n')
+      }
+
+      if (result !== undefined) {
+        if (output) output += '\n\n'
+        output += format(result)
+      }
+
+      if (!output) output = '✅ Sin resultado'
+
+      if (output.length > 50000) {
+        output = output.slice(0, 50000) + '\n... 😿'
+      }
+
+      await m.reply('```js\n' + output + '\n```')
       
     } catch (err) {
-      await m.reply('```\n' + safeJson({
-        error: true,
-        name: err.name || 'Error',
-        message: err.message || String(err)
-      }) + '\n```')
+      let errorMsg = err?.stack || err?.message || String(err)
+      if (errorMsg.length > 50000) {
+        errorMsg = errorMsg.slice(0, 50000) + '\n... 😿'
+      }
+      await m.reply('🚫 Error:\n```js\n' + errorMsg + '\n```')
     }
   }
+}
+
+function format(value) {
+  return typeof value === 'string'
+    ? value
+    : util.inspect(value, {
+        depth: 3,
+        breakLength: 80,
+        compact: false,
+        colors: false
+      })
 }

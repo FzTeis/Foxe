@@ -121,7 +121,7 @@ export default {
           await m.reply('```\n' + chunk + '\n```')
         }
       } else {
-        await m.reply('```\n' + formatted + '\n```')
+        await m.reply('\n' + formatted + '\n')
       }
       
     } catch (err) {

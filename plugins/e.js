@@ -3,11 +3,6 @@ import vm from 'node:vm'
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 
-const cleanCode = code => String(code || '')
-  .replace(/^(?:js|javascript)?\s*/i, '')
-  .replace(/$/i, '')
-  .trim()
-
 const getBody = m => {
   return m.text ||
     m.body ||
@@ -15,40 +10,6 @@ const getBody = m => {
     m.message?.extendedTextMessage?.text ||
     m.msg?.text ||
     ''
-}
-
-const getExecCode = (m, rawCode = null) => {
-  let code = rawCode
-  
-  if (!code) {
-    if (Array.isArray(m.args) && m.args.length) {
-      code = cleanCode(m.args.join(' '))
-    } else {
-      code = cleanCode(
-        getBody(m).replace(/^[./#!]?(exec|eval|e|>)\s*/i, '')
-      )
-    }
-  }
-  
-  const fullText = getBody(m)
-  const prefix = m.prefix || ''
-  
-  if (fullText.startsWith('=>') || (prefix === '' && fullText.trim().startsWith('=>'))) {
-    let execCode = fullText.replace(/^=>\s*/, '').trim()
-    return { type: 'expression', code: execCode }
-  }
-  
-  if (prefix === '>' || fullText.startsWith('>')) {
-    let execCode = fullText.replace(/^>\s*/, '').trim()
-    return { type: 'script', code: execCode }
-  }
-  
-  if (code.startsWith('=>')) {
-    let execCode = code.slice(2).trim()
-    return { type: 'expression', code: execCode }
-  }
-  
-  return { type: 'script', code }
 }
 
 const safeJson = value => {
@@ -85,26 +46,6 @@ const withTimeout = async (promise, ms = 60000) => {
   }
 }
 
-const executeCode = async ({ code, type, context }) => {
-  const names = Object.keys(context)
-  const values = Object.values(context)
-  
-  if (type === 'expression') {
-    const fn = new AsyncFunction(...names, `"use strict"; return (${code})`)
-    return await fn(...values)
-  }
-  
-  try {
-    const fn = new AsyncFunction(...names, `"use strict"; ${code}`)
-    return await fn(...values)
-  } catch (err) {
-    const sandbox = { ...context }
-    const script = new vm.Script(code)
-    const result = script.runInNewContext(sandbox)
-    return result
-  }
-}
-
 export default {
   command: ['exec', 'eval', 'e', '>'],
   view: ['exec', 'eval', 'e', '>'],
@@ -112,73 +53,63 @@ export default {
   noPrefix: ['=>', '>'],
   
   async run(sock, m) {
-    const { type, code } = getExecCode(m)
+    let rawCode = ''
+    
+    if (m.args && m.args.length) {
+      rawCode = m.args.join(' ')
+    } else {
+      rawCode = getBody(m)
+    }
+    
+    rawCode = rawCode.trim()
+    
+    let isExpression = false
+    let code = rawCode
+    
+    if (rawCode.startsWith('=>')) {
+      isExpression = true
+      code = rawCode.slice(2).trim()
+    } else if (rawCode.startsWith('>')) {
+      isExpression = false
+      code = rawCode.slice(1).trim()
+    } else if (m.prefix === '>') {
+      isExpression = false
+      code = rawCode
+    } else if (m.prefix === '=>') {
+      isExpression = true
+      code = rawCode
+    }
     
     if (!code) {
       return m.reply('```\n' + safeJson({
         error: true,
         message: 'Código vacío',
-        use: '.e await sock.sendMessage(m.chat, { text: "hola" })\n=> m.sender\n> let fs = require("fs"); fs.readFileSync("file.txt", "utf8")'
+        uso: '=> m.sender\n> let x = 5\n> return x * 2\n.e await sock.sendMessage(m.chat, { text: "hola" })'
       }) + '\n```')
     }
     
-    const importCache = new Map()
-    
-    const customRequire = async (moduleName) => {
-      if (importCache.has(moduleName)) {
-        return importCache.get(moduleName)
-      }
-      
-      try {
-        if (moduleName.startsWith('http')) {
-          const res = await fetch(moduleName)
-          const text = await res.text()
-          const blob = new Blob([text], { type: 'application/javascript' })
-          const url = URL.createObjectURL(blob)
-          const module = await import(url)
-          URL.revokeObjectURL(url)
-          importCache.set(moduleName, module)
-          return module
-        }
-        
-        const module = await import(moduleName)
-        importCache.set(moduleName, module)
-        return module
-      } catch {
-        const module = require(moduleName)
-        importCache.set(moduleName, module)
-        return module
-      }
-    }
-    
     try {
-      const result = await withTimeout(
-        executeCode({
-          code,
-          type,
-          context: {
-            sock,
-            conn: sock,
-            m,
-            msg: m,
-            args: m.args || [],
-            text: getBody(m),
-            command: m.command,
-            Buffer,
-            console,
-            util,
-            process,
-            require: customRequire,
-            import: customRequire,
-            fetch: global.fetch,
-            setTimeout,
-            setInterval,
-            clearTimeout,
-            clearInterval
-          }
-        }),
-        60000
-      )
+      let result
+      
+      if (isExpression) {
+        const fn = new AsyncFunction('sock', 'm', 'util', 'Buffer', 'console', 'process', 
+          `return (${code})`)
+        result = await fn(sock, m, util, Buffer, console, process)
+      } else {
+        const wrapper = new AsyncFunction('sock', 'm', 'util', 'Buffer', 'console', 'process',
+          `try {
+            ${code}
+          } catch (err) {
+            return err
+          }`
+        )
+        
+        result = await wrapper(sock, m, util, Buffer, console, process)
+        
+        if (result instanceof Error) {
+          throw result
+        }
+      }
       
       const formatted = safeJson(result)
       const maxLength = 65000

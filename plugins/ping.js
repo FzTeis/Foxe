@@ -4,7 +4,7 @@ export default {
   command: ['ping', 'p'],
   view: ['ping', 'p'],
   category: ['info'],
-
+  noPrefix: ["p", "ping"],
   async run(sock, m) {
     const start = performance.now()
 

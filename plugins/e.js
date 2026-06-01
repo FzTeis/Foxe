@@ -46,13 +46,14 @@ export default {
 
     try {
       let result
+      const context = { m, sock, util }
       
       if (isExpression) {
-        const fn = new AsyncFunction('m', `return (${code})`)
-        result = await fn(m)
+        const fn = new AsyncFunction(...Object.keys(context), `return (${code})`)
+        result = await fn(...Object.values(context))
       } else {
-        const fn = new AsyncFunction('m', code)
-        result = await fn(m)
+        const fn = new AsyncFunction(...Object.keys(context), code)
+        result = await fn(...Object.values(context))
       }
       
       const formatted = safeJson(result)

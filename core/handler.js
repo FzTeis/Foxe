@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { addToQueue } from './proc.js'
+import { downloadMediaMessage } from '@whiskeysockets/baileys'
 
 const PLUGINS_DIR = path.resolve('./plugins')
 const CONFIG_FILE = path.resolve('./config.js')
@@ -395,7 +396,10 @@ export default async function handler(sock, m) {
     
     quotedFull.download = async () => {
       try {
-        return await sock.downloadMediaMessage(quotedFull)
+        return await downloadMediaMessage(quotedFull, 'buffer', {}, {
+          logger: console,
+          reuploadRequest: sock.updateMediaMessage
+        })
       } catch {
         return null
       }
@@ -412,7 +416,10 @@ export default async function handler(sock, m) {
   
   m.download = async () => {
     try {
-      return await sock.downloadMediaMessage(m)
+      return await downloadMediaMessage(m, 'buffer', {}, {
+        logger: console,
+        reuploadRequest: sock.updateMediaMessage
+      })
     } catch {
       return null
     }

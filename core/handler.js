@@ -318,11 +318,85 @@ export default async function handler(sock, m) {
 
   m.text = body
   m.body = body
+  m.id = m.key?.id
+  m.isGroup = m.chat?.endsWith('@g.us')
+  m.sender = m.key?.participant || m.chat
+  m.timestamp = m.messageTimestamp
+  m.fromMe = m.key?.fromMe || false
+
+  const rawContent = getContent(m.message)
+  
+  m.hasMedia = !!(rawContent?.imageMessage || rawContent?.videoMessage || rawContent?.audioMessage || rawContent?.documentMessage || rawContent?.stickerMessage)
+  
+  if (rawContent?.imageMessage) m.type = 'image'
+  else if (rawContent?.videoMessage) m.type = 'video'
+  else if (rawContent?.audioMessage) m.type = 'audio'
+  else if (rawContent?.documentMessage) m.type = 'document'
+  else if (rawContent?.stickerMessage) m.type = 'sticker'
+  else m.type = 'text'
+  
+  if (m.hasMedia) {
+    m.caption = rawContent?.imageMessage?.caption || rawContent?.videoMessage?.caption || rawContent?.documentMessage?.caption || ''
+    m.mimetype = rawContent?.imageMessage?.mimetype || rawContent?.videoMessage?.mimetype || rawContent?.audioMessage?.mimetype || rawContent?.documentMessage?.mimetype || ''
+    m.size = rawContent?.imageMessage?.fileLength || rawContent?.videoMessage?.fileLength || rawContent?.audioMessage?.fileLength || rawContent?.documentMessage?.fileLength || 0
+  }
+  
+  const mentionedJids = rawContent?.extendedTextMessage?.contextInfo?.mentionedJid || []
+  const textMentions = (body || '').match(/@(\d{5,})/g) || []
+  const mentionsSet = new Set(mentionedJids)
+  for (const num of textMentions) {
+    mentionsSet.add(`${num.slice(1)}@s.whatsapp.net`)
+  }
+  m.mentions = Array.from(mentionsSet)
+  
+  const quotedRaw = rawContent?.extendedTextMessage?.contextInfo
+  m.isQuoted = !!quotedRaw?.quotedMessage
+  
+  if (m.isQuoted) {
+    const quotedType = Object.keys(quotedRaw.quotedMessage)[0]
+    const quotedMsgObj = quotedRaw.quotedMessage[quotedType]
+    m.quoted = {
+      text: quotedMsgObj?.text || quotedMsgObj?.caption || '',
+      sender: quotedRaw.participant,
+      type: quotedType.replace('Message', ''),
+      hasMedia: !!(quotedRaw.quotedMessage?.imageMessage || quotedRaw.quotedMessage?.videoMessage || quotedRaw.quotedMessage?.audioMessage || quotedRaw.quotedMessage?.documentMessage),
+      download: async () => {
+        try {
+          const quotedMsg = { message: quotedRaw.quotedMessage, key: m.key }
+          return await sock.downloadMediaMessage(quotedMsg)
+        } catch {
+          return null
+        }
+      },
+      reply: async (text, opts = {}) => {
+        const quotedMsg = { message: quotedRaw.quotedMessage, key: m.key }
+        return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: quotedMsg })
+      }
+    }
+  } else {
+    m.quoted = null
+  }
+  
+  m.download = async () => {
+    try {
+      return await sock.downloadMediaMessage(m)
+    } catch {
+      return null
+    }
+  }
+  
+  m.react = async (emoji) => {
+    await sock.sendMessage(m.chat, { react: { text: emoji, key: m.key } })
+  }
 
   if (typeof m.reply !== 'function') {
     m.reply = async (text, opts = {}) => {
       return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: m })
     }
+  }
+  
+  m.send = async (text, opts = {}) => {
+    return sock.sendMessage(m.chat, { text: String(text), ...opts })
   }
 
   let prefix = null
@@ -368,6 +442,11 @@ export default async function handler(sock, m) {
   const botJid = sock.decodeJid ? sock.decodeJid(sock.user?.id || '') : sock.user?.id || ''
   const owner = isOwner(senderJid, config)
 
+  m.args = args
+  m.cmd = cmdName
+  m.prefix = prefix || ''
+  m.isOwner = owner
+
   let groupMeta = null
   let groupName = ''
   let groupAdmins = []
@@ -404,6 +483,11 @@ export default async function handler(sock, m) {
         }
       }
     }
+    m.isAdmin = admin
+    m.isBotAdmin = botAdmin
+    m.groupMetadata = groupMeta
+    m.groupName = groupName
+    m.groupAdmins = groupAdmins
   }
 
   if (flags.owner && !owner) {

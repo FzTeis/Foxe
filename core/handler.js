@@ -318,6 +318,13 @@ export default async function handler(sock, m) {
 
   m.text = body
   m.body = body
+
+  if (typeof m.reply !== 'function') {
+    m.reply = async (text, opts = {}) => {
+      return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: m })
+    }
+  }
+
   m.id = m.key?.id
   m.isGroup = m.chat?.endsWith('@g.us')
   m.sender = m.key?.participant || m.chat
@@ -388,12 +395,6 @@ export default async function handler(sock, m) {
   m.react = async (emoji) => {
     await sock.sendMessage(m.chat, { react: { text: emoji, key: m.key } })
   }
-
-  if (typeof m.reply !== 'function') {
-    m.reply = async (text, opts = {}) => {
-      return sock.sendMessage(m.chat, { text: String(text), ...opts }, { quoted: m })
-    }
-  }
   
   m.send = async (text, opts = {}) => {
     return sock.sendMessage(m.chat, { text: String(text), ...opts })
@@ -433,7 +434,7 @@ export default async function handler(sock, m) {
 
   if (!loaded) await ready
 
-  const cmd = cmdMap.get(cmdName)
+  let cmd = cmdMap.get(cmdName)
   if (!cmd) return
 
   const flags = getFlags(cmd)
